@@ -51,6 +51,29 @@ Open `http://localhost:5173`.
 11. Mark the task as `review`, `done`, `failed`, or `archived`.
 12. Remove the worktree only when you are done with it.
 
+## Linux Release Build
+
+Build a self-contained Linux x64 archive:
+
+```bash
+./scripts/build-linux.sh
+```
+
+The script builds the frontend with `VITE_API_BASE_URL=/api`, bundles the FastAPI backend and static frontend with PyInstaller, and writes:
+
+- `release/agentdesk-linux-x64.tar.gz`
+- `release/agentdesk-linux-x64.tar.gz.sha256`
+
+Run the packaged app:
+
+```bash
+tar -xzf release/agentdesk-linux-x64.tar.gz -C /tmp
+/tmp/agentdesk-linux-x64/agentdesk
+```
+
+The executable starts the local server at `http://127.0.0.1:8765` and opens the browser automatically.
+Set `AGENTDESK_NO_BROWSER=1` if you want to start only the server.
+
 ## Backend
 
 Run only the API:
