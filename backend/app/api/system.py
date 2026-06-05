@@ -22,6 +22,7 @@ def system_check() -> SystemCheck:
         _check_command("codex", required=True),
         _check_command("kitty", required=True),
         _check_command("code", required=False),
+        _check_command("script", required=False),
     ]
     ok = all(command.found for command in commands if command.required)
     return SystemCheck(ok=ok, commands=commands)

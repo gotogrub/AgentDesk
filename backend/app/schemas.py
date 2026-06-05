@@ -6,6 +6,8 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 SessionStatus = Literal["draft", "running", "review", "done", "failed", "archived"]
+CodexLaunchMode = Literal["start", "resume_last", "resume_picker"]
+CodexApprovalPolicy = Literal["untrusted", "on-request", "never"]
 
 
 class ProjectCreate(BaseModel):
@@ -113,3 +115,14 @@ class GitDiffResponse(BaseModel):
 class OpenKittyResponse(BaseModel):
     ok: bool
     warning: str | None = None
+    mode: str | None = None
+    approval: str | None = None
+    log_path: str | None = None
+    pid: int | None = None
+
+
+class SessionLogResponse(BaseModel):
+    raw: str
+    log_path: str
+    exists: bool
+    truncated: bool = False

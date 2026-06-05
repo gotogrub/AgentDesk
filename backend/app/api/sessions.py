@@ -10,7 +10,16 @@ from app.api.deps import get_project_or_404, get_session_or_404
 from app.config import settings
 from app.db import get_db
 from app.models import Project, Session
-from app.schemas import OpenKittyResponse, SessionCreate, SessionDetail, SessionPatch, SessionRead
+from app.schemas import (
+    CodexApprovalPolicy,
+    CodexLaunchMode,
+    OpenKittyResponse,
+    SessionCreate,
+    SessionDetail,
+    SessionLogResponse,
+    SessionPatch,
+    SessionRead,
+)
 from app.services.event_service import event_service
 from app.services.git_service import GitError, GitService
 from app.services.prompt_service import prompt_service
@@ -165,14 +174,30 @@ def update_session(
 
 
 @router.post("/sessions/{session_id}/open-kitty", response_model=OpenKittyResponse)
-def open_kitty(session_id: str, db: DbSession = Depends(get_db)) -> OpenKittyResponse:
+def open_kitty(
+    session_id: str,
+    mode: CodexLaunchMode = Query(default="start"),
+    approval: CodexApprovalPolicy = Query(default="on-request"),
+    db: DbSession = Depends(get_db),
+) -> OpenKittyResponse:
     session = get_session_or_404(db, session_id)
     worktree_path = Path(session.worktree_path)
     if not worktree_path.exists():
         raise HTTPException(status_code=400, detail="Worktree path does not exist")
 
+    if not session.prompt_path or not Path(session.prompt_path).exists():
+        prompt_service.regenerate(db, session)
+        db.flush()
+
     try:
-        warning = terminal_service.open_kitty(worktree_path)
+        launch = terminal_service.open_codex_kitty(
+            worktree_path,
+            session_id=session.id,
+            prompt_path=Path(session.prompt_path),
+            log_dir=settings.logs_dir / session.id,
+            mode=mode,
+            approval=approval,
+        )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:
@@ -193,11 +218,44 @@ def open_kitty(session_id: str, db: DbSession = Depends(get_db)) -> OpenKittyRes
         "kitty_opened",
         session_id=session.id,
         project_id=session.project_id,
-        payload={"worktree_path": session.worktree_path, "warning": warning},
+        payload={
+            "worktree_path": session.worktree_path,
+            "warning": launch["warning"],
+            "mode": mode,
+            "approval": approval,
+            "log_path": launch["log_path"],
+            "script_path": launch["script_path"],
+            "pid": launch["pid"],
+        },
     )
     db.add(session)
     db.commit()
-    return OpenKittyResponse(ok=True, warning=warning)
+    return OpenKittyResponse(
+        ok=True,
+        warning=launch["warning"],
+        mode=mode,
+        approval=approval,
+        log_path=launch["log_path"],
+        pid=launch["pid"],
+    )
+
+
+@router.get("/sessions/{session_id}/logs", response_model=SessionLogResponse)
+def get_session_logs(
+    session_id: str,
+    limit: int = Query(default=200_000, ge=1_000, le=1_000_000),
+    db: DbSession = Depends(get_db),
+) -> SessionLogResponse:
+    get_session_or_404(db, session_id)
+    log_path = settings.logs_dir / session_id / "codex.log"
+    if not log_path.exists():
+        return SessionLogResponse(raw="", log_path=str(log_path), exists=False, truncated=False)
+
+    raw = log_path.read_text(encoding="utf-8", errors="replace")
+    truncated = len(raw) > limit
+    if truncated:
+        raw = raw[-limit:]
+    return SessionLogResponse(raw=raw, log_path=str(log_path), exists=True, truncated=truncated)
 
 
 @router.post("/sessions/{session_id}/open-vscode")

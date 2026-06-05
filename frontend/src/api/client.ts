@@ -1,4 +1,6 @@
 export type SessionStatus = "draft" | "running" | "review" | "done" | "failed" | "archived";
+export type CodexLaunchMode = "start" | "resume_last" | "resume_picker";
+export type CodexApprovalPolicy = "untrusted" | "on-request" | "never";
 
 export type Project = {
   id: string;
@@ -75,6 +77,13 @@ export type GitStatusResponse = {
 
 export type GitDiffResponse = {
   raw: string;
+  truncated: boolean;
+};
+
+export type SessionLogResponse = {
+  raw: string;
+  log_path: string;
+  exists: boolean;
   truncated: boolean;
 };
 
@@ -160,10 +169,17 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload)
     }),
-  openKitty: (sessionId: string) =>
-    request<{ ok: boolean; warning: string | null }>(`/sessions/${sessionId}/open-kitty`, {
-      method: "POST"
-    }),
+  openKitty: (
+    sessionId: string,
+    mode: CodexLaunchMode = "start",
+    approval: CodexApprovalPolicy = "on-request"
+  ) =>
+    request<{ ok: boolean; warning: string | null; log_path: string | null; pid: number | null }>(
+      `/sessions/${sessionId}/open-kitty?mode=${mode}&approval=${approval}`,
+      {
+        method: "POST"
+      }
+    ),
   openSessionVscode: (sessionId: string) =>
     request<{ ok: boolean }>(`/sessions/${sessionId}/open-vscode`, {
       method: "POST"
@@ -191,7 +207,8 @@ export const api = {
     }),
 
   gitStatus: (sessionId: string) => request<GitStatusResponse>(`/sessions/${sessionId}/git/status`),
-  gitDiff: (sessionId: string) => request<GitDiffResponse>(`/sessions/${sessionId}/git/diff`)
+  gitDiff: (sessionId: string) => request<GitDiffResponse>(`/sessions/${sessionId}/git/diff`),
+  sessionLogs: (sessionId: string) => request<SessionLogResponse>(`/sessions/${sessionId}/logs`)
 };
 
 export function formatDate(value: string): string {

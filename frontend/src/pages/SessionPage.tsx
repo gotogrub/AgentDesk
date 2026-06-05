@@ -5,13 +5,16 @@ import {
   api,
   formatDate,
   type GitDiffResponse,
+  type CodexApprovalPolicy,
   type GitStatusResponse,
   type SessionDetail,
+  type SessionLogResponse,
   type SessionStatus
 } from "../api/client";
 import { AttachmentDropzone } from "../components/AttachmentDropzone";
 import { DiffViewer } from "../components/DiffViewer";
 import { FileList } from "../components/FileList";
+import { LogViewer } from "../components/LogViewer";
 import { SessionActions } from "../components/SessionActions";
 import { StatusBadge } from "../components/StatusBadge";
 
@@ -30,12 +33,16 @@ export function SessionPage({ sessionId, onError, onInfo }: Props) {
   const [status, setStatus] = useState<SessionStatus>("draft");
   const [gitStatus, setGitStatus] = useState<GitStatusResponse | null>(null);
   const [diff, setDiff] = useState<GitDiffResponse | null>(null);
+  const [logs, setLogs] = useState<SessionLogResponse | null>(null);
+  const [approval, setApproval] = useState<CodexApprovalPolicy>("on-request");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadingDiff, setLoadingDiff] = useState(false);
+  const [loadingLogs, setLoadingLogs] = useState(false);
 
   useEffect(() => {
     void load();
+    void refreshLogs(false);
   }, [sessionId]);
 
   async function load() {
@@ -94,6 +101,20 @@ export function SessionPage({ sessionId, onError, onInfo }: Props) {
     }
   }
 
+  async function refreshLogs(showNotice = true) {
+    setLoadingLogs(true);
+    try {
+      const next = await api.sessionLogs(sessionId);
+      setLogs(next);
+      if (showNotice) onInfo("Logs refreshed.");
+    } catch (error) {
+      onError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoadingLogs(false);
+    }
+  }
+
+
   if (!session) {
     return (
       <div className="rounded-md border border-line bg-panel p-6 text-sm text-muted">
@@ -118,11 +139,14 @@ export function SessionPage({ sessionId, onError, onInfo }: Props) {
         </div>
         <SessionActions
           session={session}
+          approval={approval}
+          onApprovalChange={setApproval}
           onError={onError}
           onInfo={onInfo}
           onChanged={() => void load()}
           onStatus={() => void refreshStatus()}
           onDiff={() => void refreshDiff()}
+          onLogs={() => void refreshLogs(false)}
         />
       </div>
 
@@ -230,6 +254,19 @@ export function SessionPage({ sessionId, onError, onInfo }: Props) {
           onRefresh={() => void refreshDiff()}
         />
       </div>
+
+      <LogViewer
+        raw={logs?.raw || ""}
+        logPath={logs?.log_path || `${session.id}/codex.log`}
+        exists={logs?.exists || false}
+        truncated={logs?.truncated}
+        loading={loadingLogs}
+        onRefresh={() => void refreshLogs()}
+        onCopyPath={() => {
+          void navigator.clipboard.writeText(logs?.log_path || "");
+          onInfo("Log path copied.");
+        }}
+      />
 
       <section className="rounded-md border border-line bg-panel">
         <div className="border-b border-line px-4 py-3">

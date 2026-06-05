@@ -20,7 +20,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(title="AgentDesk API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="AgentDesk API", version="0.1.1", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
