@@ -7,7 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field
 
 SessionStatus = Literal["draft", "running", "review", "done", "failed", "archived"]
 CodexLaunchMode = Literal["start", "resume_last", "resume_picker"]
+CodexBackgroundMode = Literal["start", "resume_last"]
 CodexApprovalPolicy = Literal["untrusted", "on-request", "never"]
+CodexSandboxMode = Literal["read-only", "workspace-write", "danger-full-access"]
 
 
 class ProjectCreate(BaseModel):
@@ -126,3 +128,20 @@ class SessionLogResponse(BaseModel):
     log_path: str
     exists: bool
     truncated: bool = False
+
+
+class BackgroundRunResponse(BaseModel):
+    ok: bool
+    pid: int | None = None
+    log_path: str
+    mode: str
+    approval: str
+    sandbox: str
+
+
+class SessionProcessResponse(BaseModel):
+    running: bool
+    pid: int | None = None
+    exit_code: int | None = None
+    log_path: str
+    exists: bool = False

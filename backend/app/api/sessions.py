@@ -11,15 +11,20 @@ from app.config import settings
 from app.db import get_db
 from app.models import Project, Session
 from app.schemas import (
+    BackgroundRunResponse,
     CodexApprovalPolicy,
+    CodexBackgroundMode,
     CodexLaunchMode,
+    CodexSandboxMode,
     OpenKittyResponse,
     SessionCreate,
     SessionDetail,
     SessionLogResponse,
     SessionPatch,
+    SessionProcessResponse,
     SessionRead,
 )
+from app.services.codex_service import codex_service
 from app.services.event_service import event_service
 from app.services.git_service import GitError, GitService
 from app.services.prompt_service import prompt_service
@@ -34,13 +39,19 @@ git_service = GitService()
 @router.get("/projects/{project_id}/sessions", response_model=list[SessionRead])
 def list_project_sessions(project_id: str, db: DbSession = Depends(get_db)) -> list[Session]:
     get_project_or_404(db, project_id)
-    return list(
+    sessions = list(
         db.scalars(
             select(Session)
             .where(Session.project_id == project_id)
             .order_by(Session.updated_at.desc())
         ).all()
     )
+    changed = False
+    for session in sessions:
+        changed = _sync_background_state(db, session) or changed
+    if changed:
+        db.commit()
+    return sessions
 
 
 @router.post(
@@ -115,6 +126,9 @@ def create_session(
 @router.get("/sessions/{session_id}", response_model=SessionDetail)
 def get_session(session_id: str, db: DbSession = Depends(get_db)) -> SessionDetail:
     session = get_session_or_404(db, session_id)
+    if _sync_background_state(db, session):
+        db.commit()
+        db.refresh(session)
     detail = SessionDetail.model_validate(session)
     detail.prompt_content = prompt_service.read_prompt(session)
     return detail
@@ -258,6 +272,111 @@ def get_session_logs(
     return SessionLogResponse(raw=raw, log_path=str(log_path), exists=True, truncated=truncated)
 
 
+@router.post("/sessions/{session_id}/run-background", response_model=BackgroundRunResponse)
+def run_background(
+    session_id: str,
+    mode: CodexBackgroundMode = Query(default="start"),
+    approval: CodexApprovalPolicy = Query(default="never"),
+    sandbox: CodexSandboxMode = Query(default="workspace-write"),
+    db: DbSession = Depends(get_db),
+) -> BackgroundRunResponse:
+    session = get_session_or_404(db, session_id)
+    worktree_path = Path(session.worktree_path)
+    if not worktree_path.exists():
+        raise HTTPException(status_code=400, detail="Worktree path does not exist")
+
+    if not session.prompt_path or not Path(session.prompt_path).exists():
+        prompt_service.regenerate(db, session)
+        db.flush()
+
+    log_dir = settings.logs_dir / session.id
+    try:
+        run = codex_service.run_background(
+            worktree_path=worktree_path,
+            session_id=session.id,
+            prompt_path=Path(session.prompt_path),
+            log_dir=log_dir,
+            mode=mode,
+            approval=approval,
+            sandbox=sandbox,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to start Codex: {exc}") from exc
+
+    if session.status in {"draft", "review", "failed", "done"}:
+        old_status = session.status
+        session.status = "running"
+        event_service.add_event(
+            db,
+            "status_changed",
+            session_id=session.id,
+            project_id=session.project_id,
+            payload={"from": old_status, "to": "running"},
+        )
+
+    event_service.add_event(
+        db,
+        "background_started",
+        session_id=session.id,
+        project_id=session.project_id,
+        payload={
+            "mode": mode,
+            "approval": approval,
+            "sandbox": sandbox,
+            "pid": run["pid"],
+            "log_path": run["log_path"],
+        },
+    )
+    db.add(session)
+    db.commit()
+    return BackgroundRunResponse(
+        ok=True,
+        pid=run["pid"],
+        log_path=str(run["log_path"]),
+        mode=mode,
+        approval=approval,
+        sandbox=sandbox,
+    )
+
+
+@router.post("/sessions/{session_id}/stop-background")
+def stop_background(session_id: str, db: DbSession = Depends(get_db)) -> dict[str, bool]:
+    session = get_session_or_404(db, session_id)
+    stopped = codex_service.stop(settings.logs_dir / session.id)
+    if stopped:
+        old_status = session.status
+        session.status = "failed"
+        event_service.add_event(
+            db,
+            "status_changed",
+            session_id=session.id,
+            project_id=session.project_id,
+            payload={"from": old_status, "to": "failed"},
+        )
+        event_service.add_event(
+            db,
+            "background_stopped",
+            session_id=session.id,
+            project_id=session.project_id,
+        )
+        db.add(session)
+        db.commit()
+    return {"ok": stopped}
+
+
+@router.get("/sessions/{session_id}/process", response_model=SessionProcessResponse)
+def get_process(session_id: str, db: DbSession = Depends(get_db)) -> SessionProcessResponse:
+    session = get_session_or_404(db, session_id)
+    if _sync_background_state(db, session):
+        db.commit()
+    state = codex_service.process_state(settings.logs_dir / session.id)
+    return SessionProcessResponse(**state)
+
+
 @router.post("/sessions/{session_id}/open-vscode")
 def open_session_vscode(session_id: str, db: DbSession = Depends(get_db)) -> dict[str, bool]:
     session = get_session_or_404(db, session_id)
@@ -355,3 +474,31 @@ def _allocate_session_paths(project: Project, title: str, repo_path: Path) -> tu
         return slug, branch_name, worktree_path
 
     raise HTTPException(status_code=409, detail="Could not allocate a unique branch/worktree name")
+
+
+def _sync_background_state(db: DbSession, session: Session) -> bool:
+    if session.status != "running":
+        return False
+    state = codex_service.process_state(settings.logs_dir / session.id)
+    if state["running"] or state["exit_code"] is None:
+        return False
+
+    exit_code = state["exit_code"]
+    next_status = "review" if exit_code == 0 else "failed"
+    session.status = next_status
+    event_service.add_event(
+        db,
+        "background_finished",
+        session_id=session.id,
+        project_id=session.project_id,
+        payload={"exit_code": exit_code, "log_path": state["log_path"]},
+    )
+    event_service.add_event(
+        db,
+        "status_changed",
+        session_id=session.id,
+        project_id=session.project_id,
+        payload={"from": "running", "to": next_status},
+    )
+    db.add(session)
+    return True

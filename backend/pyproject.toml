@@ -1,6 +1,6 @@
 [project]
 name = "agentdesk-backend"
-version = "0.1.1"
+version = "0.1.2"
 description = "Local command center for managing multiple Codex CLI agent worktrees."
 requires-python = ">=3.12"
 dependencies = [

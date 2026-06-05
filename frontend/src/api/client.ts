@@ -1,6 +1,8 @@
 export type SessionStatus = "draft" | "running" | "review" | "done" | "failed" | "archived";
 export type CodexLaunchMode = "start" | "resume_last" | "resume_picker";
+export type CodexBackgroundMode = "start" | "resume_last";
 export type CodexApprovalPolicy = "untrusted" | "on-request" | "never";
+export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-access";
 
 export type Project = {
   id: string;
@@ -85,6 +87,23 @@ export type SessionLogResponse = {
   log_path: string;
   exists: boolean;
   truncated: boolean;
+};
+
+export type BackgroundRunResponse = {
+  ok: boolean;
+  pid: number | null;
+  log_path: string;
+  mode: CodexBackgroundMode;
+  approval: CodexApprovalPolicy;
+  sandbox: CodexSandboxMode;
+};
+
+export type SessionProcessResponse = {
+  running: boolean;
+  pid: number | null;
+  exit_code: number | null;
+  log_path: string;
+  exists: boolean;
 };
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8765/api";
@@ -180,6 +199,25 @@ export const api = {
         method: "POST"
       }
     ),
+  runBackground: (
+    sessionId: string,
+    mode: CodexBackgroundMode = "start",
+    approval: CodexApprovalPolicy = "never",
+    sandbox: CodexSandboxMode = "workspace-write"
+  ) =>
+    request<BackgroundRunResponse>(
+      `/sessions/${sessionId}/run-background?mode=${mode}&approval=${approval}&sandbox=${sandbox}`,
+      {
+        method: "POST"
+      }
+    ),
+  stopBackground: (sessionId: string) =>
+    request<{ ok: boolean }>(`/sessions/${sessionId}/stop-background`, {
+      method: "POST"
+    }),
+  sessionProcess: (sessionId: string) =>
+    request<SessionProcessResponse>(`/sessions/${sessionId}/process`),
+
   openSessionVscode: (sessionId: string) =>
     request<{ ok: boolean }>(`/sessions/${sessionId}/open-vscode`, {
       method: "POST"

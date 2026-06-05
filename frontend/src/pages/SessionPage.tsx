@@ -6,9 +6,11 @@ import {
   formatDate,
   type GitDiffResponse,
   type CodexApprovalPolicy,
+  type CodexSandboxMode,
   type GitStatusResponse,
   type SessionDetail,
   type SessionLogResponse,
+  type SessionProcessResponse,
   type SessionStatus
 } from "../api/client";
 import { AttachmentDropzone } from "../components/AttachmentDropzone";
@@ -34,19 +36,36 @@ export function SessionPage({ sessionId, onError, onInfo }: Props) {
   const [gitStatus, setGitStatus] = useState<GitStatusResponse | null>(null);
   const [diff, setDiff] = useState<GitDiffResponse | null>(null);
   const [logs, setLogs] = useState<SessionLogResponse | null>(null);
-  const [approval, setApproval] = useState<CodexApprovalPolicy>("on-request");
+  const [processState, setProcessState] = useState<SessionProcessResponse | null>(null);
+  const [approval, setApproval] = useState<CodexApprovalPolicy>("never");
+  const [sandbox, setSandbox] = useState<CodexSandboxMode>("workspace-write");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loadingDiff, setLoadingDiff] = useState(false);
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [loadingProcess, setLoadingProcess] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState(false);
 
   useEffect(() => {
     void load();
+    void refreshProcess(false);
     void refreshLogs(false);
+    void refreshStatus(false);
   }, [sessionId]);
 
-  async function load() {
-    setLoading(true);
+  useEffect(() => {
+    if (session?.status !== "running") return;
+    const timer = window.setInterval(() => {
+      void load(false);
+      void refreshProcess(false);
+      void refreshLogs(false);
+      void refreshStatus(false);
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [session?.status, sessionId]);
+
+  async function load(showSpinner = true) {
+    if (showSpinner) setLoading(true);
     try {
       const next = await api.getSession(sessionId);
       setSession(next);
@@ -56,7 +75,7 @@ export function SessionPage({ sessionId, onError, onInfo }: Props) {
     } catch (error) {
       onError(error instanceof Error ? error.message : String(error));
     } finally {
-      setLoading(false);
+      if (showSpinner) setLoading(false);
     }
   }
 
@@ -78,13 +97,16 @@ export function SessionPage({ sessionId, onError, onInfo }: Props) {
     }
   }
 
-  async function refreshStatus() {
+  async function refreshStatus(showNotice = true) {
+    setLoadingStatus(true);
     try {
       const next = await api.gitStatus(sessionId);
       setGitStatus(next);
-      onInfo("Git status refreshed.");
+      if (showNotice) onInfo("Git status refreshed.");
     } catch (error) {
-      onError(error instanceof Error ? error.message : String(error));
+      if (showNotice) onError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoadingStatus(false);
     }
   }
 
@@ -108,12 +130,32 @@ export function SessionPage({ sessionId, onError, onInfo }: Props) {
       setLogs(next);
       if (showNotice) onInfo("Logs refreshed.");
     } catch (error) {
-      onError(error instanceof Error ? error.message : String(error));
+      if (showNotice) onError(error instanceof Error ? error.message : String(error));
     } finally {
       setLoadingLogs(false);
     }
   }
 
+  async function refreshProcess(showNotice = true) {
+    setLoadingProcess(true);
+    try {
+      const next = await api.sessionProcess(sessionId);
+      setProcessState(next);
+      if (showNotice) onInfo("Process state refreshed.");
+    } catch (error) {
+      if (showNotice) onError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoadingProcess(false);
+    }
+  }
+
+  const codexProcessState = processState
+    ? processState.running
+      ? "running"
+      : processState.exit_code === null
+        ? "idle"
+        : "finished"
+    : "unknown";
 
   if (!session) {
     return (
@@ -140,13 +182,16 @@ export function SessionPage({ sessionId, onError, onInfo }: Props) {
         <SessionActions
           session={session}
           approval={approval}
+          sandbox={sandbox}
           onApprovalChange={setApproval}
+          onSandboxChange={setSandbox}
           onError={onError}
           onInfo={onInfo}
           onChanged={() => void load()}
           onStatus={() => void refreshStatus()}
           onDiff={() => void refreshDiff()}
           onLogs={() => void refreshLogs(false)}
+          onProcess={() => void refreshProcess(false)}
         />
       </div>
 
@@ -204,6 +249,35 @@ export function SessionPage({ sessionId, onError, onInfo }: Props) {
         <InfoBlock label="Original repo" value={session.project.repo_path} />
       </section>
 
+      <section className="rounded-md border border-line bg-panel">
+        <div className="flex items-center justify-between border-b border-line px-4 py-3">
+          <h3 className="text-sm font-semibold text-text">Codex Process</h3>
+          <button
+            className="inline-flex h-8 items-center gap-2 rounded border border-line px-3 text-xs text-text hover:border-accent disabled:opacity-50"
+            disabled={loadingProcess}
+            onClick={() => void refreshProcess()}
+            title="Refresh background process state"
+            type="button"
+          >
+            <RefreshCw size={14} />
+            {loadingProcess ? "Refreshing..." : "Refresh"}
+          </button>
+        </div>
+        <div className="grid gap-3 p-4 text-sm md:grid-cols-4">
+          <ProcessMetric label="State" value={codexProcessState} />
+          <ProcessMetric label="PID" value={processState?.pid ? String(processState.pid) : "-"} />
+          <ProcessMetric
+            label="Exit code"
+            value={
+              processState?.exit_code === null || processState?.exit_code === undefined
+                ? "-"
+                : String(processState.exit_code)
+            }
+          />
+          <ProcessMetric label="Log" value={processState?.log_path || logs?.log_path || "-"} mono />
+        </div>
+      </section>
+
       <div className="grid gap-6 xl:grid-cols-[1fr_1fr]">
         <AttachmentDropzone
           sessionId={session.id}
@@ -243,7 +317,7 @@ export function SessionPage({ sessionId, onError, onInfo }: Props) {
             type="button"
           >
             <RefreshCw size={16} />
-            Refresh Git Status
+            {loadingStatus ? "Refreshing..." : "Refresh Git Status"}
           </button>
           <FileList files={gitStatus?.files || []} />
         </div>
@@ -295,6 +369,25 @@ export function SessionPage({ sessionId, onError, onInfo }: Props) {
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function ProcessMetric({
+  label,
+  value,
+  mono = false
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="min-w-0">
+      <div className="text-xs uppercase tracking-wide text-muted">{label}</div>
+      <div className={`mt-1 break-all text-sm text-zinc-200 ${mono ? "font-mono text-xs" : ""}`}>
+        {value}
+      </div>
     </div>
   );
 }

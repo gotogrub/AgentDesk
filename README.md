@@ -2,7 +2,7 @@
 
 AgentDesk is a local web command center for running several Codex CLI tasks in parallel on Ubuntu.
 
-One task maps to one git branch, one git worktree, and one Codex CLI session opened in a separate kitty window. The MVP does not embed a browser terminal.
+One task maps to one git branch, one git worktree, and one Codex CLI run. The default workflow runs Codex headlessly in the background and streams logs back into the task page. Kitty remains available as a manual fallback. The MVP does not embed a browser terminal.
 
 ## Requirements
 
@@ -10,8 +10,8 @@ One task maps to one git branch, one git worktree, and one Codex CLI session ope
 - Python 3.12+
 - Node.js 20+
 - git
-- kitty
 - Codex CLI available as `codex`
+- kitty is optional for the manual terminal fallback
 - VS Code CLI `code` is optional
 
 ## Install
@@ -46,10 +46,12 @@ Open `http://localhost:5173`.
 6. Attach screenshots or files on the session page.
 7. Attachment files are stored under `~/.agentdesk/attachments/<session_id>/`.
 8. Attachment absolute paths are inserted into `prompt.md`.
-9. Click `Kitty` to open `kitty --working-directory <worktree> codex`.
-10. Review git status and diff on the session page.
-11. Mark the task as `review`, `done`, `failed`, or `archived`.
-12. Remove the worktree only when you are done with it.
+9. Click `Run Background` to start `codex exec` in the task worktree with `approval=never` and `sandbox=workspace-write` by default.
+10. Watch the process state, live log, changed files, and git diff on the session page.
+11. AgentDesk moves the task from `running` to `review` when Codex exits with code `0`, or to `failed` on a non-zero exit code.
+12. Use `Kitty` only when you want an interactive manual fallback.
+13. Mark the task as `done`, `failed`, or `archived` after review.
+14. Remove the worktree only when you are done with it.
 
 ## Linux Release Build
 
@@ -91,6 +93,10 @@ Core endpoints:
 - `POST /api/projects`
 - `POST /api/projects/{project_id}/sessions`
 - `GET /api/sessions/{session_id}`
+- `POST /api/sessions/{session_id}/run-background`
+- `POST /api/sessions/{session_id}/stop-background`
+- `GET /api/sessions/{session_id}/process`
+- `GET /api/sessions/{session_id}/logs`
 - `POST /api/sessions/{session_id}/open-kitty`
 - `GET /api/sessions/{session_id}/git/status`
 - `GET /api/sessions/{session_id}/git/diff`
@@ -100,7 +106,7 @@ Core endpoints:
 - AgentDesk is local-only and does not implement auth in the MVP.
 - It does not read `~/.codex/auth.json`.
 - It does not send uploaded files anywhere.
-- It only runs predefined commands: git status/diff/worktree, kitty, code.
+- It only runs predefined commands: git status/diff/worktree, codex exec, kitty, code.
 - Worktree removal is restricted to `WORKTREE_HOME`.
 - Project deletion removes the AgentDesk record only, not the repository on disk.
 

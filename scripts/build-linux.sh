@@ -45,10 +45,13 @@ Run:
 
 The app starts a local server at http://127.0.0.1:8765 and opens the browser.
 
+Default task execution uses background codex exec. Kitty is only needed for
+the manual terminal fallback buttons.
+
 Runtime requirements:
   git
-  kitty
   codex
+  kitty is optional
   code is optional
 
 Data is stored in ~/.agentdesk by default.
